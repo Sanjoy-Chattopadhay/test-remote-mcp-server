@@ -4,13 +4,24 @@ import json
 import csv
 import io
 import aiosqlite
+import shutil
 import tempfile
 from datetime import datetime, date
 from typing import Optional
+from dotenv import load_dotenv
+from webapp import register_web_routes
 
-TEMP_DIR = tempfile.gettempdir()
-DB_PATH = os.path.join(TEMP_DIR, "expenses.db")
-CATEGORIES_PATH = os.path.join(os.path.dirname(__file__), "categories.json")
+load_dotenv()
+
+APP_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(APP_DIR, "data")
+LEGACY_TEMP_DB_PATH = os.path.join(tempfile.gettempdir(), "expenses.db")
+DB_PATH = os.path.join(DATA_DIR, "expenses.db")
+CATEGORIES_PATH = os.path.join(APP_DIR, "categories.json")
+
+os.makedirs(DATA_DIR, exist_ok=True)
+if not os.path.exists(DB_PATH) and os.path.exists(LEGACY_TEMP_DB_PATH):
+    shutil.copy2(LEGACY_TEMP_DB_PATH, DB_PATH)
 
 print(f"Database path: {DB_PATH}")
 
@@ -25,6 +36,11 @@ def init_db():
     import sqlite3
     with sqlite3.connect(DB_PATH) as c:
         c.execute("PRAGMA journal_mode=WAL")
+
+        def ensure_column(table: str, column: str, ddl: str) -> None:
+            existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
         # Core expenses table
         c.execute("""
@@ -67,6 +83,95 @@ def init_db():
                 active       INTEGER DEFAULT 1
             )
         """)
+
+        # Web application tables
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_users(
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone          TEXT NOT NULL UNIQUE,
+                full_name      TEXT DEFAULT '',
+                city           TEXT DEFAULT '',
+                currency       TEXT DEFAULT 'INR',
+                monthly_income REAL DEFAULT 0,
+                savings_goal   REAL DEFAULT 0,
+                created_at     TEXT DEFAULT (datetime('now')),
+                last_login_at  TEXT DEFAULT ''
+            )
+        """)
+        ensure_column("app_users", "email", "email TEXT DEFAULT ''")
+        ensure_column("app_users", "avatar_url", "avatar_url TEXT DEFAULT ''")
+        ensure_column("app_users", "google_sub", "google_sub TEXT DEFAULT ''")
+        ensure_column("app_users", "auth_provider", "auth_provider TEXT DEFAULT 'phone'")
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_otp_codes(
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone       TEXT NOT NULL,
+                code        TEXT NOT NULL,
+                expires_at  TEXT NOT NULL,
+                consumed_at TEXT DEFAULT NULL,
+                created_at  TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_sessions(
+                token      TEXT PRIMARY KEY,
+                user_id    INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_expenses(
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                date         TEXT NOT NULL,
+                amount       REAL NOT NULL,
+                category     TEXT NOT NULL,
+                subcategory  TEXT DEFAULT '',
+                note         TEXT DEFAULT '',
+                tags         TEXT DEFAULT '',
+                payment_mode TEXT DEFAULT '',
+                currency     TEXT DEFAULT 'INR',
+                created_at   TEXT DEFAULT (datetime('now'))
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_budgets(
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id  INTEGER NOT NULL,
+                month    TEXT NOT NULL,
+                category TEXT NOT NULL,
+                amount   REAL NOT NULL,
+                UNIQUE(user_id, month, category)
+            )
+        """)
+
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS app_recurring(
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                description  TEXT NOT NULL,
+                amount       REAL NOT NULL,
+                category     TEXT NOT NULL,
+                subcategory  TEXT DEFAULT '',
+                payment_mode TEXT DEFAULT '',
+                frequency    TEXT NOT NULL,
+                next_due     TEXT NOT NULL,
+                active       INTEGER DEFAULT 1
+            )
+        """)
+
+        c.execute("CREATE INDEX IF NOT EXISTS idx_app_expenses_user_date ON app_expenses(user_id, date)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_app_budgets_user_month ON app_budgets(user_id, month)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_app_recurring_user_due ON app_recurring(user_id, next_due)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_app_sessions_user ON app_sessions(user_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_app_otp_phone ON app_otp_codes(phone, expires_at)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_app_users_google_sub ON app_users(google_sub)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email)")
 
         # Verify write access
         c.execute("INSERT OR IGNORE INTO expenses(date,amount,category) VALUES('2000-01-01',0,'_test')")
@@ -1062,9 +1167,13 @@ async def stats_all_time():
         return json.dumps({"error": str(e)})
 
 
+register_web_routes(mcp, DB_PATH, CATEGORIES_PATH)
+
+
 # ===========================================================================
 # Run
 # ===========================================================================
 
 if __name__ == "__main__":
-    mcp.run(transport="http", host="0.0.0.0", port=8000)
+    port = int(os.getenv("PORT", "8000"))
+    mcp.run(transport="http", host="0.0.0.0", port=port)

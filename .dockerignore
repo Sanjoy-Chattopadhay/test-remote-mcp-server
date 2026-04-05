@@ -1,0 +1,10 @@
+.git
+.gitignore
+.venv
+.idea
+.claude
+__pycache__
+*.pyc
+.env
+data
+expenses.db

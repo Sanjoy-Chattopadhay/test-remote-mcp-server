@@ -2,6 +2,8 @@
 
 `ExpenseTracker` is a FastMCP-based remote server for personal expense tracking. It exposes tools and resources that let an MCP client add expenses, search and summarize spending, manage budgets, track recurring payments, and generate reports from a SQLite-backed data store.
 
+It now also includes a built-in web application served by the same backend, with Google sign-in, a personalized dashboard, expense capture forms, budget management, recurring spend tracking, and profile settings.
+
 This project is useful from two angles:
 
 - For users: it acts like a finance assistant that can record and analyze expenses through MCP tools.
@@ -20,6 +22,7 @@ The server provides:
 - Statistical summaries and daily breakdowns
 - JSON resources for categories and quick dashboard-style views
 - CSV export for a selected date range
+- A premium web UI with Google sign-in and personalized planning
 
 ## User Guide
 
@@ -35,6 +38,13 @@ You can use this server through any MCP-compatible client to:
 - Track recurring items like rent, EMI, subscriptions, or utility bills
 - Export filtered expense data as CSV
 - Pull quick resources such as `today`, `this_month`, and `budgets/status`
+
+Or open the built-in web app in a browser and:
+
+- Sign in with Google
+- Set up a personal profile with name, city, income, and savings goal
+- Review a polished monthly dashboard with trends and highlights
+- Add expenses, budgets, and recurring bills from one interface
 
 ### Data Captured Per Expense
 
@@ -165,11 +175,14 @@ By default, the server starts with:
 - host: `0.0.0.0`
 - port: `8000`
 
+Open [http://localhost:8000](http://localhost:8000) for the web app.
+The MCP endpoint remains available at [http://localhost:8000/mcp](http://localhost:8000/mcp).
+
 ### Data Storage Behavior
 
-The server stores its SQLite database in the system temp directory, not inside the repository:
+The server stores its SQLite database inside the project so it stays standalone locally:
 
-- database file: `tempdir()/expenses.db`
+- database file: `data/expenses.db`
 
 That behavior is defined in [`main.py`](/Users/Sanjoy%20Chattopadhyay/PycharmProjects/MCP/Build-local-server/main.py). On startup, the server initializes required tables if they do not already exist:
 
@@ -177,11 +190,11 @@ That behavior is defined in [`main.py`](/Users/Sanjoy%20Chattopadhyay/PycharmPro
 - `budgets`
 - `recurring`
 
-This makes local setup easy, but it also means:
+This makes local setup easy, and the app will also copy forward an older temp-directory database if one exists. For hosted deployment, you still need persistent disk storage because SQLite is file-based.
 
-- data is environment-specific
-- a temp-directory cleanup could remove the database
-- production deployment should likely move `DB_PATH` to a persistent location
+- local data remains self-contained with the project
+- hosted deployment should use a platform with persistent disk storage
+- serverless platforms with ephemeral filesystems are not a good fit for long-lived SQLite data
 
 ### Architecture Notes
 
@@ -216,9 +229,9 @@ These are the kinds of requests an MCP client can make through this server:
 
 ## Current Limitations
 
-- No authentication layer is built into the server
+- Google sign-in requires a configured OAuth Web Client ID
 - No automated tests are included yet
-- Database path is temporary by default
+- Hosted deployments need persistent storage for SQLite
 - Schema migrations are implicit rather than versioned
 - Some validation rules are light and rely on client discipline
 

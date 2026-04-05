@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: expense-tracker-app
+    runtime: docker
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    healthCheckPath: /api/health
+    disk:
+      name: expense-tracker-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: GOOGLE_CLIENT_ID
+        sync: false

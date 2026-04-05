@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExpenseTracker</title>
+  <script>
+    (function () {
+      document.documentElement.setAttribute(
+        "data-theme",
+        window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+      );
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+    <div id="fileWarning" class="file-warning glass hidden">
+      <strong>Open the app from the server, not from the file system.</strong>
+      <p>
+        Use <code>http://localhost:8000</code> while <code>uv run .\main.py</code> is running.
+        Opening <code>web/index.html</code> directly will break the live app behavior.
+      </p>
+    </div>
+
+    <section id="authView" class="view active auth-screen">
+      <div class="layout-wrap auth-grid">
+        <div class="hero-panel glass">
+          <div class="brand-lockup">
+            <span class="brand-mark">ExpenseTracker</span>
+            <p class="eyebrow">Private finance clarity</p>
+          </div>
+          <h1>Your spending, composed with quiet confidence.</h1>
+          <p class="hero-lead">
+            Plan monthly budgets, follow trends, and manage recurring bills in a workspace that feels calm and deliberate.
+          </p>
+          <section class="connect-card">
+            <div class="section-header section-header--flat">
+              <div>
+                <p class="eyebrow">MCP for assistants</p>
+                <h3>Add this app to your chatbot</h3>
+              </div>
+            </div>
+            <p class="hero-copy">
+              Paste the hosted endpoint into any client that supports remote MCP servers (Claude, ChatGPT, and similar).
+            </p>
+            <div class="endpoint-box">
+              <code id="publicMcpUrl">https://academic-gold-weasel.fastmcp.app/mcp</code>
+              <button id="copyPublicMcpBtn" class="ghost-button" type="button">Copy</button>
+            </div>
+            <ol class="step-list">
+              <li>Open your assistant’s MCP or connector settings.</li>
+              <li>Add the URL as a remote MCP server and save.</li>
+              <li>Use ExpenseTracker tools directly from chat.</li>
+            </ol>
+          </section>
+          <div class="hero-metrics">
+            <article>
+              <span>Overview</span>
+              <strong>Budgets, trends, recurring</strong>
+            </article>
+            <article>
+              <span>Access</span>
+              <strong>Google sign-in</strong>
+            </article>
+            <article>
+              <span>Focus</span>
+              <strong>Day-to-day discipline</strong>
+            </article>
+          </div>
+        </div>
+
+        <aside class="auth-panel glass">
+          <div class="panel-header">
+            <p class="eyebrow">Sign in</p>
+            <h2>Continue with Google</h2>
+            <p class="panel-sub">One account unlocks your dashboard—no separate password to manage.</p>
+          </div>
+          <div class="stack-form">
+            <div id="googleAuthStatus" class="otp-hint hidden"></div>
+            <div id="googleSignInWrap" class="google-wrap">
+              <div id="googleSignInButton" class="google-button-host"></div>
+            </div>
+            <p id="googleFallbackHelp" class="fine-print">
+              Add a Google web client ID in the app config to enable production sign-in.
+            </p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="appView" class="view hidden app-screen">
+      <div class="layout-wrap">
+        <header class="app-header">
+          <div class="app-header__titles">
+            <span class="brand-mark brand-mark--small">ExpenseTracker</span>
+            <h2 id="welcomeTitle" class="app-greeting">Good evening</h2>
+          </div>
+          <div class="app-header__actions">
+            <button id="refreshBtn" class="ghost-button ghost-button--quiet" type="button">Refresh</button>
+            <button id="logoutBtn" class="ghost-button ghost-button--outline" type="button">Log out</button>
+          </div>
+        </header>
+
+        <nav class="app-nav" aria-label="Main">
+          <button class="tab active" type="button" data-tab="overview">Overview</button>
+          <button class="tab" type="button" data-tab="expenses">Expenses</button>
+          <button class="tab" type="button" data-tab="budgets">Budgets</button>
+          <button class="tab" type="button" data-tab="recurring">Recurring</button>
+          <button class="tab" type="button" data-tab="profile">Profile</button>
+        </nav>
+
+        <main class="content-grid">
+          <section id="overviewTab" class="tab-panel active">
+            <div class="stats-row">
+              <article class="stat-card glass reveal">
+                <span class="stat-card__label">This month spent</span>
+                <strong id="statSpent" class="stat-card__value">0</strong>
+                <small id="statTransactions" class="stat-card__meta">0 transactions</small>
+              </article>
+              <article class="stat-card glass reveal">
+                <span class="stat-card__label">Budget in play</span>
+                <strong id="statBudget" class="stat-card__value">0</strong>
+                <small id="statBudgetLeft" class="stat-card__meta">0 left</small>
+              </article>
+              <article class="stat-card glass reveal">
+                <span class="stat-card__label">Monthly income</span>
+                <strong id="statIncome" class="stat-card__value">0</strong>
+                <small id="statSavings" class="stat-card__meta">0 available</small>
+              </article>
+            </div>
+
+            <div class="dashboard-grid">
+              <section class="feature-card glass reveal dashboard-grid__full">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Momentum</p>
+                    <h3>Spending trend</h3>
+                  </div>
+                  <span id="activeMonthLabel" class="chip"></span>
+                </div>
+                <div id="trendChart" class="trend-chart"></div>
+              </section>
+
+              <section class="feature-card glass reveal">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Categories</p>
+                    <h3>Where money goes</h3>
+                  </div>
+                </div>
+                <div id="categoryList" class="ranked-list"></div>
+              </section>
+
+              <section class="feature-card glass reveal">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Highlights</p>
+                    <h3>Notes for you</h3>
+                  </div>
+                </div>
+                <div id="highlightList" class="insight-list"></div>
+              </section>
+
+              <section class="feature-card glass reveal">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Activity</p>
+                    <h3>Recent expenses</h3>
+                  </div>
+                </div>
+                <div id="recentExpenses" class="expense-list"></div>
+              </section>
+
+              <section class="feature-card glass reveal">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">MCP</p>
+                    <h3>Chatbot endpoint</h3>
+                  </div>
+                </div>
+                <p class="hero-copy">
+                  Use the same hosted URL in assistant settings whenever you need tools in chat.
+                </p>
+                <div class="endpoint-box">
+                  <code id="appMcpUrl">https://academic-gold-weasel.fastmcp.app/mcp</code>
+                  <button id="copyAppMcpBtn" class="ghost-button" type="button">Copy</button>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section id="expensesTab" class="tab-panel hidden">
+            <div class="panel-split">
+              <section class="feature-card glass">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">New entry</p>
+                    <h3>Add expense</h3>
+                  </div>
+                </div>
+                <form id="expenseForm" class="stack-form">
+                  <label><span>Date</span><input name="date" type="date" required></label>
+                  <label><span>Amount</span><input name="amount" type="number" min="0" step="0.01" placeholder="0.00" required></label>
+                  <label>
+                    <span>Category</span>
+                    <select id="expenseCategory" name="category" required></select>
+                  </label>
+                  <label>
+                    <span>Subcategory</span>
+                    <select id="expenseSubcategory" name="subcategory"></select>
+                  </label>
+                  <label><span>Payment mode</span><input name="payment_mode" type="text" placeholder="UPI, card, cash"></label>
+                  <label><span>Tags</span><input name="tags" type="text" placeholder="work, travel"></label>
+                  <label><span>Note</span><textarea name="note" rows="3" placeholder="Optional context"></textarea></label>
+                  <button class="primary-button" type="submit">Save expense</button>
+                </form>
+              </section>
+
+              <section class="feature-card glass">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">History</p>
+                    <h3>All entries</h3>
+                  </div>
+                  <div class="inline-actions">
+                    <input id="expenseSearch" class="input-inline" type="search" placeholder="Search…">
+                    <button id="expenseSearchBtn" class="ghost-button" type="button">Filter</button>
+                  </div>
+                </div>
+                <div id="expenseHistory" class="expense-list tall-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <section id="budgetsTab" class="tab-panel hidden">
+            <div class="panel-split">
+              <section class="feature-card glass">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Plan</p>
+                    <h3>Set a budget</h3>
+                  </div>
+                </div>
+                <form id="budgetForm" class="stack-form">
+                  <label><span>Month</span><input name="month" type="month" required></label>
+                  <label>
+                    <span>Category</span>
+                    <select id="budgetCategory" name="category" required></select>
+                  </label>
+                  <label><span>Amount</span><input name="amount" type="number" min="0" step="0.01" required></label>
+                  <button class="primary-button" type="submit">Save budget</button>
+                </form>
+              </section>
+
+              <section class="feature-card glass">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Progress</p>
+                    <h3>Budgets this month</h3>
+                  </div>
+                </div>
+                <div id="budgetList" class="budget-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <section id="recurringTab" class="tab-panel hidden">
+            <div class="panel-split">
+              <section class="feature-card glass">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Routine</p>
+                    <h3>Recurring expense</h3>
+                  </div>
+                </div>
+                <form id="recurringForm" class="stack-form">
+                  <label><span>Description</span><input name="description" type="text" placeholder="Subscription name" required></label>
+                  <label><span>Amount</span><input name="amount" type="number" min="0" step="0.01" required></label>
+                  <label>
+                    <span>Category</span>
+                    <select id="recurringCategory" name="category" required></select>
+                  </label>
+                  <label>
+                    <span>Subcategory</span>
+                    <select id="recurringSubcategory" name="subcategory"></select>
+                  </label>
+                  <label><span>Payment mode</span><input name="payment_mode" type="text" placeholder="Card, UPI"></label>
+                  <label>
+                    <span>Frequency</span>
+                    <select name="frequency">
+                      <option value="monthly">Monthly</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </label>
+                  <label><span>Next due</span><input name="next_due" type="date" required></label>
+                  <button class="primary-button" type="submit">Create recurring</button>
+                </form>
+              </section>
+
+              <section class="feature-card glass">
+                <div class="section-header">
+                  <div>
+                    <p class="eyebrow">Schedule</p>
+                    <h3>Upcoming</h3>
+                  </div>
+                </div>
+                <div id="recurringList" class="expense-list tall-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <section id="profileTab" class="tab-panel hidden">
+            <section class="feature-card glass slim-panel">
+              <div class="section-header">
+                <div>
+                  <p class="eyebrow">Account</p>
+                  <h3>Profile &amp; defaults</h3>
+                </div>
+              </div>
+              <form id="profileForm" class="stack-form profile-grid">
+                <label><span>Full name</span><input name="full_name" type="text" required></label>
+                <label><span>City</span><input name="city" type="text" placeholder="City"></label>
+                <label><span>Monthly income</span><input name="monthly_income" type="number" min="0" step="0.01"></label>
+                <label><span>Savings goal</span><input name="savings_goal" type="number" min="0" step="0.01"></label>
+                <label><span>Currency</span><input name="currency" type="text" maxlength="8" placeholder="INR"></label>
+                <label><span>Email</span><input id="profileEmail" type="text" disabled></label>
+                <button class="primary-button" type="submit">Save profile</button>
+              </form>
+            </section>
+          </section>
+        </main>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
