@@ -1033,15 +1033,18 @@ def categories():
 
 
 @mcp.resource("expense:///summary/today", mime_type="application/json")
-async def summary_today():
+def summary_today():
     """Quick summary of today's expenses."""
+    import sqlite3
     today = date.today().isoformat()
     try:
-        rows = await _rows(DB_PATH, """
-            SELECT category, SUM(amount) AS total, COUNT(*) AS txns
-            FROM expenses WHERE date=?
-            GROUP BY category ORDER BY total DESC
-        """, (today,))
+        with sqlite3.connect(DB_PATH) as c:
+            c.row_factory = sqlite3.Row
+            rows = [dict(r) for r in c.execute("""
+                SELECT category, SUM(amount) AS total, COUNT(*) AS txns
+                FROM expenses WHERE date=?
+                GROUP BY category ORDER BY total DESC
+            """, (today,))]
         cur_total = sum(r["total"] for r in rows)
         return json.dumps({"date": today, "total": round(cur_total, 2), "by_category": rows}, indent=2)
     except Exception as e:
@@ -1049,8 +1052,9 @@ async def summary_today():
 
 
 @mcp.resource("expense:///summary/this_month", mime_type="application/json")
-async def summary_this_month():
+def summary_this_month():
     """Quick summary of expenses in the current calendar month."""
+    import sqlite3
     import calendar
     today = date.today()
     start = f"{today.year:04d}-{today.month:02d}-01"
@@ -1058,17 +1062,18 @@ async def summary_this_month():
     end   = f"{today.year:04d}-{today.month:02d}-{last:02d}"
     m     = f"{today.year:04d}-{today.month:02d}"
     try:
-        rows = await _rows(DB_PATH, """
-            SELECT category, SUM(amount) AS total, COUNT(*) AS txns
-            FROM expenses WHERE date BETWEEN ? AND ?
-            GROUP BY category ORDER BY total DESC
-        """, (start, end))
-        cur_total = sum(r["total"] for r in rows)
+        with sqlite3.connect(DB_PATH) as c:
+            c.row_factory = sqlite3.Row
+            rows = [dict(r) for r in c.execute("""
+                SELECT category, SUM(amount) AS total, COUNT(*) AS txns
+                FROM expenses WHERE date BETWEEN ? AND ?
+                GROUP BY category ORDER BY total DESC
+            """, (start, end))]
+            budget_rows = list(c.execute(
+                "SELECT category, amount AS budget FROM budgets WHERE month=?", (m,)))
+            budget_map = {r[0]: r[1] for r in budget_rows}
 
-        # Budget status
-        budgets = await _rows(DB_PATH,
-            "SELECT category, amount AS budget FROM budgets WHERE month=?", (m,))
-        budget_map = {b["category"]: b["budget"] for b in budgets}
+        cur_total = sum(r["total"] for r in rows)
         for r in rows:
             if r["category"] in budget_map:
                 b = budget_map[r["category"]]
@@ -1087,48 +1092,52 @@ async def summary_this_month():
 
 
 @mcp.resource("expense:///recurring/due_soon", mime_type="application/json")
-async def recurring_due_soon():
+def recurring_due_soon():
     """Recurring expenses due within the next 7 days."""
-    today = date.today()
+    import sqlite3
     from datetime import timedelta
+    today = date.today()
     cutoff = (today + timedelta(days=7)).isoformat()
     try:
-        rows = await _rows(DB_PATH, """
-            SELECT * FROM recurring
-            WHERE active=1 AND next_due <= ?
-            ORDER BY next_due
-        """, (cutoff,))
+        with sqlite3.connect(DB_PATH) as c:
+            c.row_factory = sqlite3.Row
+            rows = [dict(r) for r in c.execute("""
+                SELECT * FROM recurring
+                WHERE active=1 AND next_due <= ?
+                ORDER BY next_due
+            """, (cutoff,))]
         return json.dumps({"as_of": today.isoformat(), "due_within_7_days": rows}, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 
 @mcp.resource("expense:///budgets/status", mime_type="application/json")
-async def budgets_status():
+def budgets_status():
     """Budget vs actual for the current month."""
+    import sqlite3
     import calendar
     today = date.today()
     m = f"{today.year:04d}-{today.month:02d}"
     last = calendar.monthrange(today.year, today.month)[1]
     start, end = f"{m}-01", f"{m}-{last:02d}"
     try:
-        budgets = await _rows(DB_PATH,
-            "SELECT category, amount AS budget FROM budgets WHERE month=?", (m,))
-        result = []
-        async with aiosqlite.connect(DB_PATH) as c:
-            for b in budgets:
-                cur = await c.execute(
+        with sqlite3.connect(DB_PATH) as c:
+            budgets = list(c.execute(
+                "SELECT category, amount AS budget FROM budgets WHERE month=?", (m,)))
+            result = []
+            for cat, budget in budgets:
+                row = c.execute(
                     "SELECT COALESCE(SUM(amount),0) FROM expenses WHERE date BETWEEN ? AND ? AND category=?",
-                    (start, end, b["category"])
-                )
-                spent = (await cur.fetchone())[0]
+                    (start, end, cat)
+                ).fetchone()
+                spent = row[0]
                 result.append({
-                    "category": b["category"],
-                    "budget": b["budget"],
+                    "category": cat,
+                    "budget": budget,
                     "spent": round(spent, 2),
-                    "remaining": round(b["budget"] - spent, 2),
-                    "pct_used": round(spent / b["budget"] * 100, 1) if b["budget"] > 0 else None,
-                    "over_budget": spent > b["budget"]
+                    "remaining": round(budget - spent, 2),
+                    "pct_used": round(spent / budget * 100, 1) if budget > 0 else None,
+                    "over_budget": spent > budget
                 })
         return json.dumps({"month": m, "budgets": result}, indent=2)
     except Exception as e:
@@ -1136,11 +1145,13 @@ async def budgets_status():
 
 
 @mcp.resource("expense:///stats/all_time", mime_type="application/json")
-async def stats_all_time():
+def stats_all_time():
     """High-level all-time statistics."""
+    import sqlite3
     try:
-        async with aiosqlite.connect(DB_PATH) as c:
-            cur = await c.execute("""
+        with sqlite3.connect(DB_PATH) as c:
+            c.row_factory = sqlite3.Row
+            row = c.execute("""
                 SELECT
                     COUNT(*) AS total_txns,
                     COALESCE(SUM(amount),0) AS total_spent,
@@ -1150,18 +1161,13 @@ async def stats_all_time():
                     MIN(date) AS first_date,
                     MAX(date) AS last_date
                 FROM expenses
-            """)
-            row = await cur.fetchone()
-            cols = [d[0] for d in cur.description]
-            stats = dict(zip(cols, row))
-
-            cur = await c.execute("""
+            """).fetchone()
+            stats = dict(row)
+            top_cats = [{"category": r[0], "total": r[1]} for r in c.execute("""
                 SELECT category, SUM(amount) AS total
                 FROM expenses GROUP BY category ORDER BY total DESC LIMIT 5
-            """)
-            top_cats = [{"category": r[0], "total": r[1]} for r in await cur.fetchall()]
+            """)]
             stats["top_5_categories"] = top_cats
-
         return json.dumps(stats, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
